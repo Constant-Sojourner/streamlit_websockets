@@ -1,22 +1,54 @@
-import asyncio
-
 import streamlit as st
-from utils import consumer
+import asyncio
+import websockets
+import json
+import multiprocessing
+import socket
 
+# Create an asynchronous function to handle websocket connections
+async def handle_websocket(websocket, path):
+    print("Handling websocket connection")
+    async for message in websocket:
+        data = json.loads(message)
+        message = data['message']
+        st.session_state.messages.append(message)  # Update UI with new message
+        await websocket.send(json.dumps({"message": message}))
 
-st.set_page_config(page_title="stream", layout="wide")
+# Create a function to start the websocket server (for multiprocessing)
+def start_server_process():
+    print("Starting server process")
+    asyncio.run(start_server())
 
-status = st.empty()
-connect = st.checkbox("Connect to WS Server")
+async def start_server():
+    async with websockets.serve(handle_websocket, "localhost", 8766):
+        print(f"Server started on ws://localhost:8766")
+        await asyncio.Future()  # Run forever
 
-selected_channels = st.multiselect("Select Channels", ["A", "B", "C"], default=["A"])
+# Streamlit UI
+st.title("Simple Chat App")
 
-columns = [col.empty() for col in st.columns(len(selected_channels))]
+# Initialize session state variables
+if 'server_started' not in st.session_state:
+    st.session_state.server_started = False
+    st.session_state.messages = []
+    st.rerun()
 
+user_input = st.text_input("Enter your message:")
+send_button = st.button("Send")
 
-window_size = st.number_input("Window Size", min_value=10, max_value=100)
+# Handle sending messages
+if send_button:
+    async def send_message():
+        async with websockets.connect("ws://localhost:8766") as websocket:
+            await websocket.send(json.dumps({"message": user_input}))
+    asyncio.run(send_message())
 
-if connect:
-    asyncio.run(consumer(dict(zip(selected_channels, columns)), selected_channels, window_size, status))
-else:
-    status.subheader(f"Disconnected.")
+# Display messages
+st.markdown("**Chat Messages:**")
+st.markdown("\n".join(st.session_state.messages))
+
+# Start the server in a separate process
+if not st.session_state.server_started:
+    st.session_state.server_started = True
+    st.session_state.server_process = multiprocessing.Process(target=start_server_process)
+    st.session_state.server_process.start()
